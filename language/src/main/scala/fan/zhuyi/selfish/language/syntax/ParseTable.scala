@@ -8,12 +8,12 @@ import scala.collection.mutable
 
 class ParseTable {
 
-  trait ParseKey
+  private sealed trait ParseKey
 
-  case class ParseClass[T](offset: Int) extends ParseKey;
+  private final case class ParseClass[T](offset: Int) extends ParseKey;
 
 
-  private val map: mutable.HashMap[ParseKey, GeneralResult] = mutable.HashMap.empty;
+  private final val map: mutable.HashMap[ParseKey, GeneralResult] = mutable.HashMap.empty;
 
   def find[T <: Node](offset: Int): Option[ParseResult[T]] = map.get(ParseClass[T](offset))
     .map(_.left.map(_.asInstanceOf[T]))

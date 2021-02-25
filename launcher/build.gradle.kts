@@ -10,7 +10,7 @@ dependencies {
     implementation("org.graalvm.sdk:launcher-common:$graalvmVersion")
 }
 
-val launcherMainClassName = "sh.elv.launcher.ElvishLauncher"
+val launcherMainClassName = "fan.zhuyi.selfish.launcher.SelfishLauncher"
 
 tasks.jar {
     manifest {
