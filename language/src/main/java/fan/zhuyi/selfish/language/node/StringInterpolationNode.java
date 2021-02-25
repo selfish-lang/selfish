@@ -1,5 +1,6 @@
 package fan.zhuyi.selfish.language.node;
 
+import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.source.SourceSection;
 
@@ -14,11 +15,16 @@ public class StringInterpolationNode extends StringNode {
 
     @ExplodeLoop
     @Override
-    public String executeString() {
+    public String executeString(VirtualFrame frame) {
         var builder = new StringBuilder();
         for (var i : stringNodes) {
-            builder.append(i.executeString());
+            builder.append(i.executeString(frame));
         }
         return builder.toString();
+    }
+
+    @Override
+    public Object executeGeneric(VirtualFrame frame) {
+        return executeString(frame);
     }
 }

@@ -1,5 +1,6 @@
 package fan.zhuyi.selfish.language.node;
 
+import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.source.SourceSection;
 
 public class StringLiteralNode extends StringNode {
@@ -11,7 +12,13 @@ public class StringLiteralNode extends StringNode {
     }
 
     @Override
-    public String executeString() {
+    public String executeString(VirtualFrame frame) {
         return literal;
     }
+
+    @Override
+    public Object executeGeneric(VirtualFrame frame) {
+        return executeString(frame);
+    }
+
 }

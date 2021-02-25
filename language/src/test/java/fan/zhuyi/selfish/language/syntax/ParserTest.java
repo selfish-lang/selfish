@@ -14,7 +14,7 @@ public class ParserTest {
         assertTrue(result.isLeft());
         var node = result.left().get();
         assertTrue(node instanceof StringLiteralNode);
-        var literal = node.executeString();
+        var literal = node.executeString(null);
         assertEquals(literal, value);
         assertEquals(range == null ? source : range, node.getSourceSection().getCharacters().toString());
     }
