@@ -1,9 +1,6 @@
 package fan.zhuyi.selfish.language.node;
 
-import com.oracle.truffle.api.Assumption;
 import com.oracle.truffle.api.CompilerDirectives;
-import com.oracle.truffle.api.TruffleRuntime;
-import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.source.SourceSection;
@@ -40,18 +37,25 @@ public abstract class BarewordNode extends ExpressionNode {
     }
 
 
+    private static final class CachedData {
+        String expanded;
+        String user;
+        String cwd;
+
+        public CachedData(String expanded, String user, String cwd) {
+        }
+    }
+
+    CachedData cache = null;
+
     @Specialization
     @SuppressWarnings("unused")
-    public String executeString(VirtualFrame frame,
-                                @Cached("expandedString(frame)") String expanded,
-                                @Cached("getCurrentUser()") String user,
-                                @Cached("currentWorkingDirectory()") String cwd) {
-        if (user.equals(getCurrentUser()) && cwd.equals(currentWorkingDirectory())) {
-            return expanded;
-        } else {
+    public String executeStringCached(VirtualFrame frame) {
+        if (cache == null || !cache.user.equals(getCurrentUser()) || !cache.cwd.equals(currentWorkingDirectory())) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
-            return expandedString(frame);
+            cache = new CachedData(expandedString(frame), getCurrentUser(), currentWorkingDirectory());
         }
+        return cache.expanded;
     }
 
     public String expandedString(VirtualFrame frame) {
