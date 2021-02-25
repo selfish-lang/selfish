@@ -1,5 +1,8 @@
 package fan.zhuyi.selfish.language.node;
 
+import com.oracle.truffle.api.Assumption;
+import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.TruffleRuntime;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -23,7 +26,7 @@ public abstract class BarewordNode extends ExpressionNode {
         return bareword.contains("*");
     }
 
-    protected String getCurrentUser() {
+    protected static String getCurrentUser() {
         return System.getenv("USER");
     }
 
@@ -36,17 +39,21 @@ public abstract class BarewordNode extends ExpressionNode {
         return bareword;
     }
 
-    @Specialization(guards = {"currentWorkingDirectory() == cwd", "getCurrentUser() == user"})
+
+    @Specialization
     @SuppressWarnings("unused")
     public String executeString(VirtualFrame frame,
                                 @Cached("expandedString(frame)") String expanded,
                                 @Cached("getCurrentUser()") String user,
                                 @Cached("currentWorkingDirectory()") String cwd) {
-        return expanded;
+        if (user.equals(getCurrentUser()) && cwd.equals(currentWorkingDirectory())) {
+            return expanded;
+        } else {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            return expandedString(frame);
+        }
     }
 
-    @Specialization(replaces = "executeString")
-    @SuppressWarnings("unused")
     public String expandedString(VirtualFrame frame) {
         return "later";
     }
