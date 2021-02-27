@@ -43,6 +43,9 @@ public abstract class BarewordNode extends ExpressionNode {
         String cwd;
 
         public CachedData(String expanded, String user, String cwd) {
+            this.expanded = expanded;
+            this.user = user;
+            this.cwd = cwd;
         }
     }
 
