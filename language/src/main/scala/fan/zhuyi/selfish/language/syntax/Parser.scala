@@ -15,7 +15,7 @@ object Parser {
   type ParseResult[T <: Node] = Either[T, Error];
   type SubParseResult[T] = Either[T, Error];
 
-  val ASCII: CharsetEncoder = Charset.forName("\"US-ASCII").newEncoder();
+  val ASCII: CharsetEncoder = Charset.forName("US-ASCII").newEncoder();
 
   final def isPrintableChar(c: Int): Boolean = {
     val block = Character.UnicodeBlock.of(c)
@@ -157,7 +157,7 @@ class Parser(source: Source) {
     if (builder.isEmpty) {
       Right(createParseError("empty bareword"))
     } else {
-      Left(BarewordNodeGen.create(source.createSection(start, this.offset - start)))
+      Left(BarewordNodeGen.create(source.createSection(start, this.offset - start), builder.toString()))
     }
   }
 

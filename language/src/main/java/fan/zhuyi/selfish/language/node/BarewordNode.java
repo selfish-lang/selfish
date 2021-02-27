@@ -10,8 +10,9 @@ import java.nio.file.Paths;
 public abstract class BarewordNode extends ExpressionNode {
     String bareword;
 
-    BarewordNode(SourceSection section) {
+    BarewordNode(SourceSection section, String bareword) {
         super(section);
+        this.bareword = bareword;
     }
 
     protected boolean needTildeExpansion() {
