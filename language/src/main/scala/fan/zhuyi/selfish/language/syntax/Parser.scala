@@ -2,9 +2,11 @@ package fan.zhuyi.selfish.language.syntax
 
 import com.oracle.truffle.api.nodes.Node
 import com.oracle.truffle.api.source.{Source, SourceSection}
-import fan.zhuyi.selfish.language.node.{ExpressionNode, StringInterpolationNode, StringLiteralNode, StringNode}
-import fan.zhuyi.selfish.language.syntax.Parser.{ParseResult, SubParseResult}
+import fan.zhuyi.selfish.language.node._
+import fan.zhuyi.selfish.language.syntax.Parser._
 
+import java.awt.event.KeyEvent
+import java.nio.charset.{Charset, CharsetEncoder}
 import scala.collection.mutable
 import scala.util.control.Breaks.{break, breakable}
 
@@ -12,6 +14,40 @@ object Parser {
   type GeneralResult = Either[Node, Error];
   type ParseResult[T <: Node] = Either[T, Error];
   type SubParseResult[T] = Either[T, Error];
+
+  val ASCII: CharsetEncoder = Charset.forName("\"US-ASCII").newEncoder();
+
+  final def isPrintableChar(c: Int): Boolean = {
+    val block = Character.UnicodeBlock.of(c)
+    (!Character.isISOControl(c)) &&
+      c != KeyEvent.CHAR_UNDEFINED &&
+      block != null &&
+      (block != Character.UnicodeBlock.SPECIALS)
+  }
+
+  sealed trait CharInfo;
+
+  final case object Tilde extends CharInfo;
+
+  final case object Wildcard extends CharInfo;
+
+  final case class Valid(x: Int) extends CharInfo;
+
+  final case object Invalid extends CharInfo;
+
+  final case object EndingHint extends CharInfo;
+
+  final def checkCodePoint(c: Int): CharInfo = {
+    c match {
+      case '~' => Tilde
+      case '*' => Wildcard
+      case '!' | '%' | '@' | '+' | '-' | ',' | '/' | '\\' | '_' => Valid(c)
+      case c if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') => Valid(c)
+      case c if Character.charCount(c) == 1 && ASCII.canEncode(Character.toChars(c)) => Invalid
+      case c if isPrintableChar(c) => Valid(c)
+    }
+  }
+
 }
 
 class Parser(source: Source) {
@@ -56,6 +92,31 @@ class Parser(source: Source) {
     Some(sequence.charAt(offset))
   }
 
+
+  final case class CachedCodePoint(offset: Int, value: Option[Int]);
+  var codePointCache: CachedCodePoint = _;
+
+  def topCodePoint: Option[Int] = {
+    if (codePointCache != null && codePointCache.offset == offset) {
+      return codePointCache.value;
+    }
+    val result: Option[Int] = topChar match {
+      case None => None
+      case Some(c) if c.isHighSurrogate =>
+        topChar match {
+          case Some(d) if d.isLowSurrogate => Some(Character.toCodePoint(c, d))
+          case _ => Some(c)
+        }
+      case Some(c) => Some(c)
+    }
+    codePointCache = CachedCodePoint(offset, result)
+    result
+  }
+
+  def moveNextCP(): Unit = {
+    offset += topCodePoint.map(Character.charCount).getOrElse(0);
+  }
+
   def moveNext(): Unit = {
     offset += 1
   }
@@ -74,6 +135,29 @@ class Parser(source: Source) {
         moveNextLine();
       }
       moveNext()
+    }
+  }
+
+  def parseBareword: ParseResult[BarewordNode] = {
+    val start = offset;
+    val builder = new StringBuilder
+    var codepoint = topCodePoint.map(checkCodePoint)
+    while (codepoint match {
+      case None => false
+      case Some(Valid(x)) => builder.addAll(Character.toString(x)); true
+      case Some(Wildcard) => builder.addOne('*'); true
+      case Some(Tilde) if builder.isEmpty => builder.addOne('~'); true
+      case Some(EndingHint) => false
+      case _ =>
+        return Right(createParseError(s"invalid bareword character: ${Character.toString(topCodePoint.get)}"))
+    }) {
+      moveNextCP()
+      codepoint = topCodePoint.map(checkCodePoint)
+    }
+    if (builder.isEmpty) {
+      Right(createParseError("empty bareword"))
+    } else {
+      Left(BarewordNodeGen.create(source.createSection(start, this.offset - start)))
     }
   }
 

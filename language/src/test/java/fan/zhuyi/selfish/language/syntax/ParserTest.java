@@ -31,5 +31,6 @@ public class ParserTest {
         testRawStr(" \"\\x12 \" ",  "\u0012 ", "\"\\x12 \"");
         testRawStr("\"\\U00001234您\"",  "\u1234您", null);
         testRawStr("\"\\$(1)\\U0001F600\"",  "$(1)\uD83D\uDE00", null);
+        testRawStr("\"\uD834\uDD1E\"", "\uD834\uDD1E", null);
     }
 }
