@@ -9,19 +9,14 @@ import java.nio.file.Paths;
 
 public abstract class BarewordNode extends ExpressionNode {
     String bareword;
+    protected final boolean needWildcardExpansion;
+    protected final boolean needTildeExpansion;
 
-    BarewordNode(SourceSection section, String bareword) {
+    BarewordNode(SourceSection section, String bareword, boolean needWildcardExpansion, boolean needTildeExpansion) {
         super(section);
         this.bareword = bareword;
-    }
-
-    protected boolean needTildeExpansion() {
-        return bareword.charAt(0) == '~';
-    }
-
-    protected boolean needWildCardExpansion() {
-        /* use context please*/
-        return bareword.contains("*");
+        this.needTildeExpansion = needTildeExpansion;
+        this.needWildcardExpansion = needWildcardExpansion;
     }
 
     protected static String getCurrentUser() {
@@ -32,7 +27,7 @@ public abstract class BarewordNode extends ExpressionNode {
         return Paths.get(".").toAbsolutePath().normalize().toString();
     }
 
-    @Specialization(guards = {"!needTildeExpansion()", "!needWildCardExpansion()"})
+    @Specialization(guards = {"!needTildeExpansion", "!needWildcardExpansion"})
     public String executeString(VirtualFrame frame) {
         return bareword;
     }

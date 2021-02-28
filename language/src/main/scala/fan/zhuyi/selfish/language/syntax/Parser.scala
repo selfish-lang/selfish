@@ -142,11 +142,15 @@ class Parser(source: Source) {
     val start = offset;
     val builder = new StringBuilder
     var codepoint = topCodePoint.map(checkCodePoint)
+    var needWildcardExpansion = false;
+    var needTildeExpansion = false;
     while (codepoint match {
       case None => false
       case Some(Valid(x)) => builder.addAll(Character.toString(x)); true
-      case Some(Wildcard) => builder.addOne('*'); true
-      case Some(Tilde) if builder.isEmpty => builder.addOne('~'); true
+      case Some(Wildcard) => builder.addOne('*'); needWildcardExpansion = true; true
+      case Some(Tilde) if builder.isEmpty => builder.addOne('~'); needTildeExpansion = true; true
+      case Some(Tilde) =>
+        return Right(createParseError("tilde symbol can only be placed at the beginning of a bareword"));
       case Some(EndingHint) => false
       case _ =>
         return Right(createParseError(s"invalid bareword character: ${Character.toString(topCodePoint.get)}"))
@@ -157,7 +161,11 @@ class Parser(source: Source) {
     if (builder.isEmpty) {
       Right(createParseError("empty bareword"))
     } else {
-      Left(BarewordNodeGen.create(source.createSection(start, this.offset - start), builder.toString()))
+      Left(BarewordNodeGen.create(
+        source.createSection(start, this.offset - start),
+        builder.toString(),
+        needWildcardExpansion,
+        needTildeExpansion))
     }
   }
 
