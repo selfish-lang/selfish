@@ -102,9 +102,9 @@ class Parser(source: Source) {
     }
     val result: Option[Int] = topChar match {
       case None => None
-      case Some(c) if c.isHighSurrogate =>
-        topChar match {
-          case Some(d) if d.isLowSurrogate => Some(Character.toCodePoint(c, d))
+      case Some(c) if c.isHighSurrogate && offset + 1 < sequence.length() =>
+        sequence.charAt(offset + 1) match {
+          case d if d.isLowSurrogate => Some(Character.toCodePoint(c, d))
           case _ => Some(c)
         }
       case Some(c) => Some(c)
@@ -418,6 +418,7 @@ class Parser(source: Source) {
       }
       count match {
         case 2 => Left(new StringLiteralNode(source.createSection(offset - 2, 2), ""))
+        case 6 => Left(new StringLiteralNode(source.createSection(offset - 6, 6), ""))
         case 3 => parseStringWith("heredoc", 3)
         case 1 => parseStringWith("double quoted string", 1)
         case _ => Right(createParseError("expected double quoted string, single quoted string or heredoc"))
