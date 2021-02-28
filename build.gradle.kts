@@ -21,6 +21,7 @@ allprojects {
 
     tasks.compileTestJava {
         options.release.set(11)
+        options.compilerArgs.add("-Xlint:deprecation")
     }
 
     tasks.test {

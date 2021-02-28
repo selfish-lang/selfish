@@ -11,9 +11,9 @@ import scala.collection.mutable
 import scala.util.control.Breaks.{break, breakable}
 
 object Parser {
-  type GeneralResult = Either[Node, Error];
-  type ParseResult[T <: Node] = Either[T, Error];
-  type SubParseResult[T] = Either[T, Error];
+  type GeneralResult = Either[Error, Node];
+  type ParseResult[T <: Node] = Either[Error, T];
+  type SubParseResult[T] = Either[Error, T];
 
   val ASCII: CharsetEncoder = Charset.forName("US-ASCII").newEncoder();
 
@@ -48,6 +48,71 @@ object Parser {
     }
   }
 
+  final def checkExprEnding(c: Char): Boolean = {
+    c == '|' || c == ';' || c == ')'
+  }
+
+  sealed trait EscapeMode;
+
+  final case object NoEscape extends EscapeMode;
+
+  final case object EscapeStart extends EscapeMode;
+
+  final case class EscapeOct(count: Int, value: Int) extends EscapeMode;
+
+  final case class EscapeHex(count: Int, value: Int) extends EscapeMode;
+
+  final case class EscapeSmall(count: Int, value: Int) extends EscapeMode;
+
+  final case class EscapeLarge(count: Int, value: Int) extends EscapeMode;
+
+  sealed trait StringState {
+    def builder: mutable.StringBuilder
+
+    def submitNode(section: SourceSection): StringState = {
+      val lit = builder.toString()
+      builder.clear()
+      this match {
+        case PureLiteral(builder) =>
+          val buffer = mutable.ArrayBuffer.empty[ExpressionNode];
+          if (lit.nonEmpty) {
+            buffer += new StringLiteralNode(section, lit)
+          }
+          Interpolation(buffer, builder)
+        case Interpolation(seq, _) =>
+          seq += new StringLiteralNode(section, lit)
+          this
+      }
+    }
+
+    def finish(section: SourceSection): StringNode = {
+      this match {
+        case PureLiteral(builder) =>
+          new StringLiteralNode(section, builder.toString())
+        case Interpolation(seq, builder) =>
+          if (!builder.isEmpty) {
+            seq += new StringLiteralNode(section, builder.toString())
+          }
+          new StringInterpolationNode(section, seq.toArray)
+      }
+    }
+
+    def addExpr(expr: ExpressionNode): Unit = {
+      this match {
+        case PureLiteral(_) => ()
+        case Interpolation(seq, _) =>
+          seq += expr
+      }
+    }
+
+  }
+
+  final case class PureLiteral(builder: StringBuilder) extends StringState
+
+  final case class Interpolation(seq: mutable.ArrayBuffer[ExpressionNode], builder: StringBuilder) extends StringState
+
+  final case class CachedCodePoint(offset: Int, value: Option[Int]);
+
 }
 
 class Parser(source: Source) {
@@ -59,21 +124,21 @@ class Parser(source: Source) {
     new Error(s"[syntax error] ${source.getName}:${this.source.getLineNumber(offset)}:${this.source.getColumnNumber(offset)}: ${message}")
   }
 
-  private[this] def withContext[R <: Node](action: => Either[R, Error]): ParseResult[R] = {
+  private[this] def withContext[R <: Node](action: => Either[Error, R]): ParseResult[R] = {
     val beforeOffset = this.offset;
     eatWhiteSpace()
     val afterOffset = this.offset;
     this.table.find[R](offset) match {
-      case Some(Left(node)) =>
+      case Some(Right(node)) =>
         this.offset = node.getSourceSection.getCharEndIndex
-        Left(node)
+        Right(node)
       case Some(right) =>
         right
       case None =>
         val result = action match {
-          case Right(error) =>
+          case Left(error) =>
             this.offset = beforeOffset
-            Right(error)
+            Left(error)
           case x => x
         }
         table.cache(afterOffset, result)
@@ -92,8 +157,6 @@ class Parser(source: Source) {
     Some(sequence.charAt(offset))
   }
 
-
-  final case class CachedCodePoint(offset: Int, value: Option[Int]);
   var codePointCache: CachedCodePoint = _;
 
   def topCodePoint: Option[Int] = {
@@ -150,18 +213,18 @@ class Parser(source: Source) {
       case Some(Wildcard) => builder.addOne('*'); needWildcardExpansion = true; true
       case Some(Tilde) if builder.isEmpty => builder.addOne('~'); needTildeExpansion = true; true
       case Some(Tilde) =>
-        return Right(createParseError("tilde symbol can only be placed at the beginning of a bareword"));
+        return Left(createParseError("tilde symbol can only be placed at the beginning of a bareword"));
       case Some(EndingHint) => false
       case _ =>
-        return Right(createParseError(s"invalid bareword character: ${Character.toString(topCodePoint.get)}"))
+        return Left(createParseError(s"invalid bareword character: ${Character.toString(topCodePoint.get)}"))
     }) {
       moveNextCP()
       codepoint = topCodePoint.map(checkCodePoint)
     }
     if (builder.isEmpty) {
-      Right(createParseError("empty bareword"))
+      Left(createParseError("empty bareword"))
     } else {
-      Left(BarewordNodeGen.create(
+      Right(BarewordNodeGen.create(
         source.createSection(start, this.offset - start),
         builder.toString(),
         needWildcardExpansion,
@@ -188,68 +251,9 @@ class Parser(source: Source) {
       moveNext()
       currentChar = topChar
     }
-    if (!foundQuote) Right(createParseError("single quoted string is not closed"))
-    else Left(new StringLiteralNode(source.createSection(start, this.offset - start), builder.toString))
+    if (!foundQuote) Left(createParseError("single quoted string is not closed"))
+    else Right(new StringLiteralNode(source.createSection(start, this.offset - start), builder.toString))
   }
-
-  private sealed trait EscapeMode;
-
-  private final case object NoEscape extends EscapeMode;
-
-  private final case object EscapeStart extends EscapeMode;
-
-  private final case class EscapeOct(count: Int, value: Int) extends EscapeMode;
-
-  private final case class EscapeHex(count: Int, value: Int) extends EscapeMode;
-
-  private final case class EscapeSmall(count: Int, value: Int) extends EscapeMode;
-
-  private final case class EscapeLarge(count: Int, value: Int) extends EscapeMode;
-
-  private sealed trait StringState {
-    def builder: mutable.StringBuilder
-
-    def submitNode(section: SourceSection): StringState = {
-      val lit = builder.toString()
-      builder.clear()
-      this match {
-        case PureLiteral(builder) =>
-          val buffer = mutable.ArrayBuffer.empty[ExpressionNode];
-          if (lit.nonEmpty) {
-            buffer += new StringLiteralNode(section, lit)
-          }
-          Interpolation(buffer, builder)
-        case Interpolation(seq, _) =>
-          seq += new StringLiteralNode(section, lit)
-          this
-      }
-    }
-
-    def finish(section: SourceSection): StringNode = {
-      this match {
-        case PureLiteral(builder) =>
-          new StringLiteralNode(section, builder.toString())
-        case Interpolation(seq, builder) =>
-          if (!builder.isEmpty) {
-            seq += new StringLiteralNode(section, builder.toString())
-          }
-          new StringInterpolationNode(section, seq.toArray)
-      }
-    }
-
-    def addExpr(expr: ExpressionNode): Unit = {
-      this match {
-        case PureLiteral(_) => ()
-        case Interpolation(seq, _) =>
-          seq += expr
-      }
-    }
-
-  }
-
-  private final case class PureLiteral(builder: StringBuilder) extends StringState
-
-  private final case class Interpolation(seq: mutable.ArrayBuffer[ExpressionNode], builder: StringBuilder) extends StringState
 
   private def testHex(char: Char): Int = {
     if (char - '0' >= 0 && char - '0' <= 9) return char - '0';
@@ -262,7 +266,7 @@ class Parser(source: Source) {
     var currentChar = topChar;
     var level = 1;
     if (!currentChar.contains('(')) {
-      return Right(createParseError(s"expected left parenthesis for expression"))
+      return Left(createParseError(s"expected left parenthesis for expression"))
     }
     moveNext();
     currentChar = topChar;
@@ -277,9 +281,9 @@ class Parser(source: Source) {
       currentChar = topChar;
     }
     if (level == 0) {
-      Left(null)
+      Right(null)
     } else {
-      Right(createParseError("expect right parenthesis for expression"))
+      Left(createParseError("expect right parenthesis for expression"))
     }
   }
 
@@ -310,8 +314,8 @@ class Parser(source: Source) {
               assert(topChar.contains('('))
               state = state.submitNode(source.createSection(start, this.offset - start));
               parseParenExpression match {
-                case Left(tree) => state.addExpr(tree)
-                case Right(error) => return Right(error)
+                case Right(tree) => state.addExpr(tree)
+                case Left(error) => return Left(error)
               }
               currentChar = topChar
               noMove = true
@@ -352,7 +356,7 @@ class Parser(source: Source) {
               case digit if digit.isDigit && digit < '8' =>
                 escaping = EscapeOct(1, digit.asDigit)
               case unknown =>
-                return Right(createParseError(s"unknown escape character: '${unknown}'"))
+                return Left(createParseError(s"unknown escape character: '${unknown}'"))
             }
             escaping = NoEscape
           case EscapeOct(3, x) =>
@@ -364,7 +368,7 @@ class Parser(source: Source) {
               case digit if digit.isDigit && digit < '8' =>
                 escaping = EscapeOct(i + 1, x * 8 + digit.asDigit)
               case invalid =>
-                return Right(createParseError(s"expect 3 octal digits, found: ${invalid}"))
+                return Left(createParseError(s"expect 3 octal digits, found: ${invalid}"))
             }
           case EscapeHex(2, x) =>
             noMove = true;
@@ -373,7 +377,7 @@ class Parser(source: Source) {
           case EscapeHex(i, x) =>
             testHex(currentChar.get) match {
               case -1 =>
-                return Right(createParseError(s"expect 2 hex digits, found: ${currentChar.get}"))
+                return Left(createParseError(s"expect 2 hex digits, found: ${currentChar.get}"))
               case y =>
                 escaping = EscapeHex(i + 1, x * 16 + y)
             }
@@ -384,7 +388,7 @@ class Parser(source: Source) {
           case EscapeSmall(i, x) =>
             testHex(currentChar.get) match {
               case -1 =>
-                return Right(createParseError(s"expect 4 hex digits, found: ${currentChar.get}"))
+                return Left(createParseError(s"expect 4 hex digits, found: ${currentChar.get}"))
               case y =>
                 escaping = EscapeSmall(i + 1, x * 16 + y)
             }
@@ -395,7 +399,7 @@ class Parser(source: Source) {
           case EscapeLarge(i, x) =>
             testHex(currentChar.get) match {
               case -1 =>
-                return Right(createParseError(s"expect 8 hex digits, found: ${currentChar.get}"))
+                return Left(createParseError(s"expect 8 hex digits, found: ${currentChar.get}"))
               case y =>
                 escaping = EscapeLarge(i + 1, x * 16 + y)
             }
@@ -408,9 +412,9 @@ class Parser(source: Source) {
       noMove = false;
     }
     if (foundQuotes == closeCond) {
-      Left(state.finish(source.createSection(start, this.offset - start)))
+      Right(state.finish(source.createSection(start, this.offset - start)))
     } else {
-      Right(createParseError(s"${stringType} is not closed"))
+      Left(createParseError(s"${stringType} is not closed"))
     }
   }
 
@@ -425,11 +429,11 @@ class Parser(source: Source) {
         moveNext()
       }
       count match {
-        case 2 => Left(new StringLiteralNode(source.createSection(offset - 2, 2), ""))
-        case 6 => Left(new StringLiteralNode(source.createSection(offset - 6, 6), ""))
+        case 2 => Right(new StringLiteralNode(source.createSection(offset - 2, 2), ""))
+        case 6 => Right(new StringLiteralNode(source.createSection(offset - 6, 6), ""))
         case 3 => parseStringWith("heredoc", 3)
         case 1 => parseStringWith("double quoted string", 1)
-        case _ => Right(createParseError("expected double quoted string, single quoted string or heredoc"))
+        case _ => Left(createParseError("expected double quoted string, single quoted string or heredoc"))
       }
     }
   }
