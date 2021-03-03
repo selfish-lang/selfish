@@ -19,9 +19,42 @@ public class SelfishParser {
     private final SelfishParserTable table = new SelfishParserTable();
 
     public final class SelfishSyntaxError extends Exception {
-        final int errOffset;
+        private final int errOffset;
+        private final boolean unclosedError;
 
         public SelfishSyntaxError(String message) {
+            super(message);
+            this.errOffset = offset;
+            this.unclosedError = false;
+        }
+
+        public SelfishSyntaxError(String message, boolean unclosedError) {
+            super(message);
+            this.errOffset = offset;
+            this.unclosedError = unclosedError;
+        }
+
+        public boolean isUnclosedError() {
+            return unclosedError;
+        }
+
+        public int getErrOffset() {
+            return errOffset;
+        }
+
+
+        @Override
+        public String getMessage() {
+            return source.getName() + ":"
+                   + source.getLineNumber(this.errOffset)
+                   + ":" + source.getColumnNumber(this.errOffset) + ": " + super.getMessage();
+        }
+    }
+
+    public final class InternalParserError extends Exception {
+        private final int errOffset;
+
+        public InternalParserError(String message) {
             super(message);
             this.errOffset = offset;
         }
@@ -97,13 +130,6 @@ public class SelfishParser {
         offset = lineStart + lineLength;
     }
 
-    private char testHex(char data) {
-        if (data - '0' >= 0 && data - '0' <= 9) return (char) (data - '0');
-        if (data - 'a' >= 0 && data - 'a' <= 5) return (char) (data - 'a' + 10);
-        if (data - 'A' >= 0 && data - 'A' <= 5) return (char) (data - 'A' + 10);
-        return Character.MAX_VALUE;
-    }
-
     private void eatWhitespace() {
         try {
             while (Character.isWhitespace(currentChar()) || currentChar() == '#') {
@@ -156,7 +182,7 @@ public class SelfishParser {
                     || isPrintableChar(codepoint)) {
                     return codepoint;
                 }
-                if (Character.charCount(codepoint) == 1 && ASCII.canEncode((char) codepoint)) {
+                if (Character.isBmpCodePoint(codepoint) && ASCII.canEncode((char) codepoint)) {
                     return INVALID;
                 }
                 return codepoint;
@@ -165,23 +191,66 @@ public class SelfishParser {
     }
 
 
-    private static final int ESCAPE_NONE = 0b1;
-    private static final int ESCAPE_NOTHING = 0b10;
-    private static final int ESCAPE_OCTAL = 0b100;
-    private static final int ESCAPE_HEX = 0b1000;
-    private static final int ESCAPE_SMALL = 0b10000;
-    private static final int ESCAPE_LARGE = 0b100000;
+    private static final int ESCAPE_NONE = 0;
+    private static final int ESCAPE_START = 1;
+    private static final int ESCAPE_OCTAL = 2;
+    private static final int ESCAPE_HEX = 3;
+    private static final int ESCAPE_SMALL = 4;
+    private static final int ESCAPE_LARGE = 5;
+    private static final long ESCAPE_MODE_MASK = 0xFF0000000000L;
+    private static final long ESCAPE_MODE_SHIFT = 40;
+    private static final long ESCAPE_COUNT_MASK = 0xFF00000000L;
+    private static final long ESCAPE_COUNT_SHIFT = 32;
+    private static final long ESCAPE_ACC_MASK = 0xFFFFFFFFL;
+
+    private static int getEscapeMode(long masked) {
+        return (int) ((masked & ESCAPE_MODE_MASK) >> ESCAPE_MODE_SHIFT);
+    }
+
+    private static long getEscapeCount(long masked) {
+        return (masked & ESCAPE_COUNT_MASK) >> ESCAPE_COUNT_SHIFT;
+    }
+
+    private static long resetEscapeMode(long mode) {
+        return mode << ESCAPE_MODE_SHIFT;
+    }
+
+    private long testHex(long value) throws SelfishSyntaxError {
+        if (value - '0' >= 0 && value - '0' <= 9) return value - '0';
+        if (value - 'a' >= 0 && value - 'a' <= 5) return value - 'a' + 10L;
+        if (value - 'A' >= 0 && value - 'A' <= 5) return value - 'A' + 10L;
+        throw new SelfishSyntaxError("invalid hexadecimal digit");
+    }
+
+    private long addEscapeHex(long current, int hex) throws SelfishSyntaxError {
+        assert getEscapeMode(current) == ESCAPE_HEX
+               || getEscapeMode(current) == ESCAPE_SMALL
+               || getEscapeMode(current) == ESCAPE_LARGE;
+        final var msb = (current & (ESCAPE_MODE_MASK + ESCAPE_COUNT_MASK)) + (1L << ESCAPE_COUNT_SHIFT);
+        final var lsb = getEscapeAccumulator(current);
+        return msb | (lsb * 16L + testHex(hex));
+    }
+
+    private long addEscapeOct(long current, int oct) throws SelfishSyntaxError {
+        assert getEscapeMode(current) == ESCAPE_OCTAL;
+        if (oct < '0' || oct > '7') {
+            throw new SelfishSyntaxError("invalid octal digit");
+        }
+        final var msb = (current & (ESCAPE_MODE_MASK + ESCAPE_COUNT_MASK)) + (1L << ESCAPE_COUNT_SHIFT);
+        final var lsb = getEscapeAccumulator(current);
+        return msb | (lsb * 8L + oct);
+    }
+
+    private static int getEscapeAccumulator(long masked) {
+        return (int) (masked & ESCAPE_ACC_MASK);
+    }
+
 
     private final class StringState {
         private final StringBuilder builder = new StringBuilder();
 
         private final ArrayList<ExpressionNode> nodes = new ArrayList<>();
-        private final int start;
         private int currentStart = offset;
-
-        StringState() {
-            this.start = offset;
-        }
 
         public void submit() {
             var literal = builder.toString();
@@ -201,13 +270,13 @@ public class SelfishParser {
 
         public StringNode finish(SourceSection section) {
             if (nodes.isEmpty() && builder.length() > 0) {
-                return new StringLiteralNode(source.createSection(start, offset - start), builder.toString());
+                return new StringLiteralNode(section, builder.toString());
             }
             if (!nodes.isEmpty()) {
                 if (builder.length() > 0) {
                     submit();
                 }
-                return new StringInterpolationNode(source.createSection(start, offset - start), nodes.toArray(ExpressionNode[]::new));
+                return new StringInterpolationNode(section, nodes.toArray(ExpressionNode[]::new));
             }
             return null;
         }
@@ -288,6 +357,204 @@ public class SelfishParser {
                     builder.toString(),
                     needWildcardExpansion,
                     needTildeExpansion);
+        });
+    }
+
+    private StringLiteralNode singleQuotedSubroutine() throws SelfishSyntaxError {
+        final var start = offset - 1;
+        var foundQuote = false;
+        final var builder = new StringBuilder();
+        try {
+            while (!foundQuote || currentChar() == '\'') {
+                if (currentChar() == '\'') {
+                    if (foundQuote) {
+                        builder.append('\'');
+                        foundQuote = false;
+                    } else {
+                        foundQuote = true;
+                    }
+                } else {
+                    builder.append(currentChar());
+                }
+                moveNextChar();
+            }
+        } catch (IndexOutOfBoundsException e) {
+            if (!foundQuote) {
+                throw new SelfishSyntaxError("unexpected EOI while parsing single quoted string", true);
+            }
+        }
+        return new StringLiteralNode(source.createSection(start, offset - start), builder.toString());
+    }
+
+    private ExpressionNode parseParenExpression() {
+        return null;
+    }
+
+    private StringNode doubleQuotedSubroutine(String type, int closeCond) throws SelfishSyntaxError, InternalParserError {
+        var escapeMode = 0L;
+        var foundQuotes = 0;
+        var noMove = false;
+        var start = offset - closeCond;
+        final var state = new StringState();
+        try {
+            while (foundQuotes != closeCond) {
+                if (getEscapeMode(escapeMode) == ESCAPE_NONE && currentChar() == '"') {
+                    foundQuotes += 1;
+                } else {
+                    while (foundQuotes > 0) {
+                        state.getBuilder().append('"');
+                        foundQuotes -= 1;
+                    }
+                    switch (getEscapeMode(escapeMode)) {
+                        case ESCAPE_NONE:
+                            if (currentChar() == '\\') {
+                                escapeMode = resetEscapeMode(ESCAPE_START);
+                            } else if (currentChar() == '$') {
+                                state.submit();
+                                moveNextChar();
+                                state.submit(parseParenExpression());
+                                noMove = true;
+                            } else {
+                                state.getBuilder().append(currentChar());
+                            }
+                            break;
+                        case ESCAPE_START:
+                            switch (currentChar()) {
+                                case 'a':
+                                    state.getBuilder().append('\u0007');
+                                    escapeMode = resetEscapeMode(ESCAPE_NONE);
+                                    break;
+                                case 'b':
+                                    state.getBuilder().append('\u0010');
+                                    escapeMode = resetEscapeMode(ESCAPE_NONE);
+                                    break;
+                                case 'f':
+                                    state.getBuilder().append('\u000c');
+                                    escapeMode = resetEscapeMode(ESCAPE_NONE);
+                                    break;
+                                case 'n':
+                                    state.getBuilder().append('\n');
+                                    escapeMode = resetEscapeMode(ESCAPE_NONE);
+                                    break;
+                                case 'r':
+                                    state.getBuilder().append('\r');
+                                    escapeMode = resetEscapeMode(ESCAPE_NONE);
+                                    break;
+                                case 't':
+                                    state.getBuilder().append('\t');
+                                    escapeMode = resetEscapeMode(ESCAPE_NONE);
+                                    break;
+                                case 'v':
+                                    state.getBuilder().append('\u000b');
+                                    escapeMode = resetEscapeMode(ESCAPE_NONE);
+                                    break;
+                                case '\\':
+                                    state.getBuilder().append('\\');
+                                    escapeMode = resetEscapeMode(ESCAPE_NONE);
+                                    break;
+                                case '"':
+                                    state.getBuilder().append('"');
+                                    escapeMode = resetEscapeMode(ESCAPE_NONE);
+                                    break;
+                                case '$':
+                                    state.getBuilder().append('$');
+                                    escapeMode = resetEscapeMode(ESCAPE_NONE);
+                                    break;
+                                case 'x':
+                                    escapeMode = resetEscapeMode(ESCAPE_HEX);
+                                    break;
+                                case 'u':
+                                    escapeMode = resetEscapeMode(ESCAPE_SMALL);
+                                    break;
+                                case 'U':
+                                    escapeMode = resetEscapeMode(ESCAPE_LARGE);
+                                    break;
+                                default:
+                                    if (currentChar() >= '0' && currentChar() <= '7') {
+                                        escapeMode = resetEscapeMode(ESCAPE_OCTAL);
+                                        escapeMode = addEscapeOct(escapeMode, currentChar());
+                                    } else {
+                                        throw new SelfishSyntaxError("unknown escape character: " + currentChar());
+                                    }
+                            }
+                            break;
+                        case ESCAPE_OCTAL:
+                            if (getEscapeCount(escapeMode) == 3) {
+                                noMove = true;
+                                state.builder.appendCodePoint(getEscapeAccumulator(escapeMode));
+                                escapeMode = resetEscapeMode(ESCAPE_NONE);
+                            } else {
+                                escapeMode = addEscapeOct(escapeMode, currentChar());
+                            }
+                            break;
+                        case ESCAPE_HEX:
+                            if (getEscapeCount(escapeMode) == 2) {
+                                noMove = true;
+                                state.builder.appendCodePoint(getEscapeAccumulator(escapeMode));
+                                escapeMode = resetEscapeMode(ESCAPE_NONE);
+                            } else {
+                                escapeMode = addEscapeHex(escapeMode, currentChar());
+                            }
+                            break;
+                        case ESCAPE_SMALL:
+                            if (getEscapeCount(escapeMode) == 4) {
+                                noMove = true;
+                                state.builder.appendCodePoint(getEscapeAccumulator(escapeMode));
+                                escapeMode = resetEscapeMode(ESCAPE_NONE);
+                            } else {
+                                escapeMode = addEscapeHex(escapeMode, currentChar());
+                            }
+                            break;
+                        case ESCAPE_LARGE:
+                            if (getEscapeCount(escapeMode) == 8) {
+                                noMove = true;
+                                state.builder.appendCodePoint(getEscapeAccumulator(escapeMode));
+                                escapeMode = resetEscapeMode(ESCAPE_NONE);
+                            } else {
+                                escapeMode = addEscapeHex(escapeMode, currentChar());
+                            }
+                            break;
+                        default:
+                            throw new InternalParserError("entered unreachable escape mode");
+                    }
+                }
+                if (!noMove) {
+                    moveNextChar();
+                }
+                noMove = false;
+            }
+        } catch (IllegalArgumentException e) {
+            throw new SelfishSyntaxError(e.getMessage());
+        } catch (IndexOutOfBoundsException e) {
+            throw new SelfishSyntaxError("unexpected EOI while parsing " + type, true);
+        }
+        return state.finish(source.createSection(start, offset - start));
+    }
+
+    public StringNode parseString() throws SelfishSyntaxError {
+        return withContext(StringNode.class, () -> {
+            var count = 0;
+            if (currentChar() == '\'') {
+                moveNextChar();
+                return singleQuotedSubroutine();
+            } else {
+                while (currentChar() == '\"') {
+                    count += 1;
+                    moveNextChar();
+                }
+                switch (count) {
+                    case 2:
+                        return new StringLiteralNode(source.createSection(offset - 2, 2), "");
+                    case 6:
+                        return new StringLiteralNode(source.createSection(offset - 6, 6), "");
+                    case 3:
+                        return doubleQuotedSubroutine("heredoc", 3);
+                    case 1:
+                        return doubleQuotedSubroutine("double quoted string", 1);
+                    default:
+                        throw new SelfishSyntaxError("expected double quoted string, single quoted string or heredoc");
+                }
+            }
         });
     }
 
