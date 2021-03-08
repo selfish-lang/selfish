@@ -33,6 +33,7 @@ allprojects {
 
     dependencies {
         implementation("org.graalvm.truffle:truffle-api:$graalvmVersion")
+        implementation("org.graalvm.sdk:graal-sdk:$graalvmVersion")
         implementation("commons-codec:commons-codec:1.15")
         annotationProcessor("org.graalvm.truffle:truffle-dsl-processor:$graalvmVersion")
 
