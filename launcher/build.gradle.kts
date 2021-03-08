@@ -25,7 +25,11 @@ application {
 }
 
 nativeImage {
-    graalVmHome = System.getenv("GRAALVM_HOME")
+    graalVmHome = if (System.getenv("GRAALVM_HOME") == null) {
+        ""
+    } else {
+        System.getenv("GRAALVM_HOME")
+    }
     mainClass = launcherMainClassName
     executableName = "selfish"
     outputDirectory = file("$buildDir/executable")
