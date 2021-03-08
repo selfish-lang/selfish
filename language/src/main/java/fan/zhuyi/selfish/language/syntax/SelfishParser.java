@@ -387,32 +387,33 @@ public class SelfishParser {
         return new StringLiteralNode(source.createSection(start, offset - start), builder.toString());
     }
 
+    private static final int EXPR_REDIRECT = -1;
     private static final int EXPR_ATOMIC = 0;
     private static final int EXPR_PIPELINE = 1;
     private static final int EXPR_CONTINUOUS = 2;
     private static final int EXPR_BACKGROUND = 3;
 
     private final static class OperatorStack {
-        private char[] data = new char[16];
+        private int[] data = new int[16];
         private int size = 0;
 
         private void grow() {
-            char[] newData = new char[data.length * 2];
+            int[] newData = new int[data.length * 2];
             System.arraycopy(data, 0, newData, 0, data.length);
             data = newData;
         }
 
-        public char top() {
+        public int top() {
             return data[size - 1];
         }
 
-        public void push(char op) {
+        public void push(int op) {
             if (size == data.length) grow();
             data[size] = op;
             size += 1;
         }
 
-        public char pop() {
+        public int pop() {
             size--;
             return data[size];
         }
@@ -422,13 +423,13 @@ public class SelfishParser {
         }
     }
 
-    private void eatWhitespaceChecked(boolean inParen) throws SelfishSyntaxError, IndexOutOfBoundsException {
+    private boolean eatWhitespaceChecked(boolean inParen) throws SelfishSyntaxError, IndexOutOfBoundsException {
         var continuousLine = false;
         while (Character.isWhitespace(currentChar()) || currentChar() == '#' || continuousLine) {
             if (currentChar() == '#') {
                 moveNextLine();
                 if (!inParen && !continuousLine) {
-                    return;
+                    return true;
                 }
                 continuousLine = false;
                 continue;
@@ -437,24 +438,66 @@ public class SelfishParser {
             } else if (currentChar() == '\n') {
                 if (!inParen && !continuousLine) {
                     moveNextChar();
-                    return;
+                    return true;
                 }
                 continuousLine = false;
             } else if (!continuousLine && currentChar() == ')') {
-                return;
+                break;
             } else
                 throw new SelfishSyntaxError("multiline symbol followed by extraneous character; " +
                                              "it can only be followed immediately by a new line or a comment.");
             moveNextChar();
         }
+        return false;
+    }
+
+    public ExpressionNode parseExpressionTerm() throws SelfishSyntaxError, IndexOutOfBoundsException {
+        if (currentChar() == '\'' || currentChar() == '\"') return parseString();
+        if (currentChar() == '(') return parseExpression(true);
+        return parseBareword();
+    }
+
+    public int parseExprOperator() throws SelfishSyntaxError {
+        if (currentChar() == '>' || currentChar() == '<') return EXPR_REDIRECT;
+        if (Character.isDigit(currentChar()) && offset < this.data.length() && (this.data.charAt(offset + 1) == '>' || this.data.charAt(offset + 1) == '<')) {
+            return EXPR_REDIRECT;
+        }
+        if (currentChar() == '&') {
+            var count = 0;
+            while (currentChar() == '&') {
+                count++;
+                moveNextChar();
+            }
+            if (count == 1) return EXPR_BACKGROUND;
+            if (count == 2) return EXPR_CONTINUOUS;
+            throw new SelfishSyntaxError("unknown expression operator");
+        }
+
+        if (currentChar() == '|') {
+            var count = 0;
+            while (currentChar() == '|') {
+                count++;
+                moveNextChar();
+            }
+            if (count == 1) return EXPR_PIPELINE;
+            throw new SelfishSyntaxError("unknown expression operator");
+        }
+
+
+        return EXPR_ATOMIC;
+
+
     }
 
     public ExpressionNode parseExpression(boolean inParen) throws SelfishSyntaxError {
         final ArrayList<ExpressionNode> terms = new ArrayList<>();
         final OperatorStack opStack = new OperatorStack();
+        if (inParen) {
+            opStack.push('(');
+        }
         try {
             eatWhitespaceChecked(inParen);
-
+            terms.add(parseExpressionTerm());
         } catch (IndexOutOfBoundsException exp) {
             // check whether the current expression is finished.
             exp.printStackTrace();
