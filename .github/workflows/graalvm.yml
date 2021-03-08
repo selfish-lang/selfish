@@ -20,7 +20,7 @@ jobs:
       - uses: eskatos/gradle-command-action@v1
         with:
           dependencies-cache-enabled: true
-          arguments: check --info --no-daemon --stacktrace
+          arguments: :language:check --info --no-daemon --stacktrace
 
   native-image:
     runs-on: ubuntu-20.04
