@@ -40,4 +40,10 @@ allprojects {
         testImplementation("org.junit.jupiter:junit-jupiter:5.7.0")
     }
 
+    tasks.withType<JavaCompile> {
+        options.compilerArgs = listOf("--add-exports", "org.graalvm.truffle/com.oracle.truffle.api.nodes=ALL-UNNAMED")
+        options.isFork = true // required for above?
+        options.forkOptions.executable = "javac" // required for above?
+    }
+
 }
