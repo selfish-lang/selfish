@@ -17,10 +17,6 @@ jobs:
       - uses: actions/setup-java@v1
         with:
           java-version: '15'
-      - name: GraalVM Setup
-        uses: DeLaGuardo/setup-graalvm@master
-        with:
-          graalvm-version: '21.0.0.java11'
       - uses: eskatos/gradle-command-action@v1
         with:
           dependencies-cache-enabled: true
