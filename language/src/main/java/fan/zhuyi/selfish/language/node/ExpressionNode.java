@@ -6,11 +6,9 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.source.SourceSection;
 
-import java.io.FileDescriptor;
 
 @TypeSystemReference(SelfishTypes.class)
 public abstract class ExpressionNode extends Node {
-
 
 
     SourceSection sourceSection;

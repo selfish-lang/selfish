@@ -135,8 +135,9 @@ public class SelfishParser {
             while (Character.isWhitespace(currentChar()) || currentChar() == '#') {
                 if (currentChar() == '#') {
                     moveNextLine();
+                } else {
+                    moveNextChar();
                 }
-                moveNextChar();
             }
         } catch (IndexOutOfBoundsException ignored) {
         }
@@ -386,7 +387,78 @@ public class SelfishParser {
         return new StringLiteralNode(source.createSection(start, offset - start), builder.toString());
     }
 
-    private ExpressionNode parseParenExpression() {
+    private static final int EXPR_ATOMIC = 0;
+    private static final int EXPR_PIPELINE = 1;
+    private static final int EXPR_CONTINUOUS = 2;
+    private static final int EXPR_BACKGROUND = 3;
+
+    private final static class OperatorStack {
+        private char[] data = new char[16];
+        private int size = 0;
+
+        private void grow() {
+            char[] newData = new char[data.length * 2];
+            System.arraycopy(data, 0, newData, 0, data.length);
+            data = newData;
+        }
+
+        public char top() {
+            return data[size - 1];
+        }
+
+        public void push(char op) {
+            if (size == data.length) grow();
+            data[size] = op;
+            size += 1;
+        }
+
+        public char pop() {
+            size--;
+            return data[size];
+        }
+
+        public boolean empty() {
+            return size == 0;
+        }
+    }
+
+    private void eatWhitespaceChecked(boolean inParen) throws SelfishSyntaxError, IndexOutOfBoundsException {
+        var continuousLine = false;
+        while (Character.isWhitespace(currentChar()) || currentChar() == '#' || continuousLine) {
+            if (currentChar() == '#') {
+                moveNextLine();
+                if (!inParen && !continuousLine) {
+                    return;
+                }
+                continuousLine = false;
+                continue;
+            } else if (!continuousLine && currentChar() == '\\') {
+                continuousLine = true;
+            } else if (currentChar() == '\n') {
+                if (!inParen && !continuousLine) {
+                    moveNextChar();
+                    return;
+                }
+                continuousLine = false;
+            } else if (!continuousLine && currentChar() == ')') {
+                return;
+            } else
+                throw new SelfishSyntaxError("multiline symbol followed by extraneous character; " +
+                                             "it can only be followed immediately by a new line or a comment.");
+            moveNextChar();
+        }
+    }
+
+    public ExpressionNode parseExpression(boolean inParen) throws SelfishSyntaxError {
+        final ArrayList<ExpressionNode> terms = new ArrayList<>();
+        final OperatorStack opStack = new OperatorStack();
+        try {
+            eatWhitespaceChecked(inParen);
+
+        } catch (IndexOutOfBoundsException exp) {
+            // check whether the current expression is finished.
+            exp.printStackTrace();
+        }
         return null;
     }
 
@@ -412,7 +484,7 @@ public class SelfishParser {
                             } else if (currentChar() == '$') {
                                 state.submit();
                                 moveNextChar();
-                                state.submit(parseParenExpression());
+                                state.submit(parseExpression(true));
                                 noMove = true;
                             } else {
                                 state.getBuilder().append(currentChar());
